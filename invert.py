@@ -1,0 +1,221 @@
+import os
+import argparse
+import math
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torchvision.transforms as transforms
+from torchvision.models import vgg16, VGG16_Weights
+from PIL import Image
+from models import Generator
+
+class VGGPerceptualLoss(nn.Module):
+    """
+    Perceptual loss based on intermediate features of a pre-trained VGG16 network.
+    """
+    def __init__(self, device):
+        super().__init__()
+        # Load pre-trained VGG16
+        vgg = vgg16(weights=VGG16_Weights.DEFAULT).features.to(device).eval()
+        
+        # We slice VGG16 to extract features from different layers (relu1_2, relu2_2, relu3_3, relu4_3)
+        self.slice1 = nn.Sequential(*list(vgg.children())[:4])
+        self.slice2 = nn.Sequential(*list(vgg.children())[4:9])
+        self.slice3 = nn.Sequential(*list(vgg.children())[9:16])
+        self.slice4 = nn.Sequential(*list(vgg.children())[16:23])
+        
+        # Freeze VGG parameters
+        for param in self.parameters():
+            param.requires_grad = False
+            
+    def forward(self, x):
+        h1 = self.slice1(x)
+        h2 = self.slice2(h1)
+        h3 = self.slice3(h2)
+        h4 = self.slice4(h3)
+        return [h1, h2, h3, h4]
+
+def get_perceptual_loss(features_gen, features_target):
+    loss = 0.0
+    weights = [1.0, 1.0, 1.0, 1.0]
+    for f_gen, f_target, w in zip(features_gen, features_target, weights):
+        loss += w * torch.mean((f_gen - f_target) ** 2)
+    return loss
+
+def load_and_preprocess_image(image_path, size=256):
+    """
+    Loads an image and preprocesses it to shape (1, 3, size, size) and range [-1, 1].
+    """
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"Target image not found at: {image_path}")
+        
+    img = Image.open(image_path).convert('RGB')
+    transform = transforms.Compose([
+        transforms.Resize((size, size)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    return transform(img).unsqueeze(0)
+
+@torch.no_grad()
+def get_w_avg(generator, device, latent_dim=512, num_samples=10000, batch_size=100):
+    """
+    Computes average w latent code to initialize the projection optimization.
+    """
+    print("Estimating w_avg for latent space initialization...")
+    w_accum = []
+    generator.eval()
+    for _ in range(num_samples // batch_size):
+        z = torch.randn(batch_size, latent_dim, device=device)
+        w = generator.g_mapping(z)
+        w_accum.append(w.mean(dim=0, keepdim=True))
+    return torch.stack(w_accum).mean(dim=0)
+
+def save_reconstruction(tensor_img, fp):
+    # tensor_img: (1, 3, H, W) in range [-1, 1]
+    img = (tensor_img.squeeze(0) + 1) / 2
+    img = torch.clamp(img, 0, 1)
+    img_np = img.detach().cpu().numpy().transpose(1, 2, 0)
+    img_uint8 = (img_np * 255.0).clip(0, 255).astype(np.uint8)
+    Image.fromarray(img_uint8).save(fp)
+
+def main():
+    parser = argparse.ArgumentParser(description="Perform GAN Inversion (Project a face photo into the StyleGAN2 latent space)")
+    parser.add_argument("--target", type=str, required=True, help="Path to target image to invert")
+    parser.add_argument("--weights", type=str, default="weights/best_checkpoint_1010k.pth", help="Path to checkpoint weights")
+    parser.add_argument("--output_dir", type=str, default="output", help="Directory to save output reconstruction and latent code")
+    parser.add_argument("--steps", type=int, default=1000, help="Number of optimization steps")
+    parser.add_argument("--lr", type=float, default=0.01, help="Optimization learning rate")
+    parser.add_argument("--device", type=str, default=None, help="Device to run on (cuda, mps, cpu)")
+
+    args = parser.parse_args()
+
+    # Determine device
+    if args.device:
+        device = torch.device(args.device)
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    print(f"Using device: {device}")
+
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # 1. Load target image
+    target_img = load_and_preprocess_image(args.target).to(device)
+    save_reconstruction(target_img, os.path.join(args.output_dir, "inversion_target.png"))
+
+    # 2. Initialize generator
+    generator = Generator().to(device)
+    checkpoint = torch.load(args.weights, map_location=device)
+    if 'g_running_state_dict' in checkpoint:
+        generator.load_state_dict(checkpoint['g_running_state_dict'])
+        print("Loaded EMA generator.")
+    elif 'g_state_dict' in checkpoint:
+        generator.load_state_dict(checkpoint['g_state_dict'])
+        print("Loaded generator.")
+    else:
+        generator.load_state_dict(checkpoint)
+        print("Loaded state_dict directly.")
+    generator.eval()
+
+    # 3. Compute initialization (w_avg)
+    w_avg = get_w_avg(generator, device)
+    
+    # We optimize in the W+ space: shape (1, 7, 512) for the 7 layers of styles
+    # We initialize it with w_avg replicated for all 7 layers
+    w_opt = w_avg.unsqueeze(0).repeat(1, 7, 1).clone().detach()
+    w_opt.requires_grad = True
+
+    # 4. Initialize optimizer and loss functions
+    optimizer = optim.Adam([w_opt], lr=args.lr)
+    mse_loss_fn = nn.MSELoss()
+    
+    # Load perceptual loss model
+    try:
+        perceptual_loss_fn = VGGPerceptualLoss(device)
+        target_features = perceptual_loss_fn(target_img)
+        print("VGG Perceptual Loss initialized successfully.")
+    except Exception as e:
+        perceptual_loss_fn = None
+        print(f"Failed to load VGG Perceptual Loss ({str(e)}). Falling back to MSE-only optimization.")
+
+    # 5. Optimization Loop
+    print(f"Starting optimization for {args.steps} steps...")
+    for step in range(args.steps):
+        # We need to map styles manually. To allow w_opt to be passed directly to the generator blocks,
+        # we bypass the g_mapping network.
+        # Let's run the generator forward pass using the custom styles
+        batch_size = 1
+        
+        # Manually perform Generator forward pass with optimized styles list
+        # self.block_4x4 accepts styles[0], self.block_8x8 accepts styles[1], etc.
+        out = generator.block_4x4(w_opt[:, 0])
+        out_4 = generator.to_rgb_4(out)
+        out_4 = generator.upsample(out_4)
+        
+        out = generator.block_8x8(w_opt[:, 1], out)
+        out_8 = generator.to_rgb_8(out)
+        out_8 += out_4 * (1 / math.sqrt(2))
+        out_8 = generator.upsample(out_8)
+        
+        out = generator.block_16x16(w_opt[:, 2], out)
+        out_16 = generator.to_rgb_16(out)
+        out_16 += out_8 * (1 / math.sqrt(2))
+        out_16 = generator.upsample(out_16)
+        
+        out = generator.block_32x32(w_opt[:, 3], out)
+        out_32 = generator.to_rgb_32(out)
+        out_32 += out_16 * (1 / math.sqrt(2))
+        out_32 = generator.upsample(out_32)
+        
+        out = generator.block_64x64(w_opt[:, 4], out)
+        out_64 = generator.to_rgb_64(out)
+        out_64 += out_32 * (1 / math.sqrt(2))
+        out_64 = generator.upsample(out_64)
+
+        out = generator.block_128x128(w_opt[:, 5], out)            
+        out_128 = generator.to_rgb_128(out)
+        out_128 += out_64 * (1 / math.sqrt(2))
+        out_128 = generator.upsample(out_128)
+
+        out = generator.block_256x256(w_opt[:, 6], out)
+        out_256 = generator.to_rgb_128(out)  # Match the trained model routing
+        out_256 += out_128 * (1 / math.sqrt(2))
+        
+        generated_img = out_256
+
+        # Calculate losses
+        loss_mse = mse_loss_fn(generated_img, target_img)
+        
+        if perceptual_loss_fn is not None:
+            gen_features = perceptual_loss_fn(generated_img)
+            loss_perceptual = get_perceptual_loss(gen_features, target_features)
+            loss = 1.0 * loss_mse + 1.0 * loss_perceptual
+        else:
+            loss = loss_mse
+
+        # Optimization step
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # Print progress
+        if step % 100 == 0 or step == args.steps - 1:
+            print(f"Step {step}/{args.steps} | Loss: {loss.item():.6f} (MSE: {loss_mse.item():.6f})")
+            # Save intermediate reconstruction
+            save_reconstruction(generated_img, os.path.join(args.output_dir, "inversion_output.png"))
+
+    # Save final results
+    latent_save_path = os.path.join(args.output_dir, "inversion_latent.pt")
+    torch.save(w_opt.detach().cpu(), latent_save_path)
+    print(f"\nOptimization complete!")
+    print(f"Saved reconstructed image to: {os.path.join(args.output_dir, 'inversion_output.png')}")
+    print(f"Saved optimized latent code to: {latent_save_path}")
+
+if __name__ == "__main__":
+    main()
