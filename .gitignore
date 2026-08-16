@@ -137,3 +137,4 @@ output/
 checkpoints/
 data/
 ffhq256_imgs/
+weights/
