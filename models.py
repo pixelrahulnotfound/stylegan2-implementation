@@ -340,7 +340,7 @@ class Generator(nn.Module):
         out_128 = self.upsample(out_128)
 
         out = self.block_256x256(styles[6], out)
-        out_256 = self.to_rgb_256(out)
+        out_256 = self.to_rgb_128(out)
         out_256 += out_128 * (1 / math.sqrt(2))
         
         if return_latents:
