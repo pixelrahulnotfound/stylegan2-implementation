@@ -9,7 +9,7 @@ This implementation successfully addresses key limitations of the original Style
 
 <img src="./assets/grid.png" alt="Grid" width="500">
 
-<p align="center">
+<p>
   <em>for truncation =  0.6.</em>
 </p>
 ---
