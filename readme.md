@@ -7,6 +7,11 @@ This implementation successfully addresses key limitations of the original Style
 2. **Smooth Training Without Progressive Growing:** Replaces progressive structure growing with skip connections in the Generator and residual connections in the Discriminator, ensuring stable training directly at the final resolution while resolving phase alignment artifacts (e.g., rigid teeth/eyes).
 3. **Lazy Regularization:** Incorporates computationally efficient R1 regularization for the Discriminator and Perceptual Path Length (PPL) regularization for the Generator.
 
+<img src="./assets/grid.png" alt="Grid" width="500">
+
+<p align="center">
+  <em>for truncation =  0.6.</em>
+</p>
 ---
 
 ## Project Structure
