@@ -66,38 +66,52 @@ def crop_and_align_face(image_path, output_path=None, size=256, padding_ratio=2.
     img_pil = Image.open(image_path).convert('RGB')
     img_np = np.array(img_pil)
     
-    img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    
-    # Try multiple cascades for robustness (alt2 is best for faces with sunglasses/tilts)
-    cascades = [
-        'haarcascade_frontalface_alt2.xml',
-        'haarcascade_frontalface_alt.xml',
-        'haarcascade_frontalface_default.xml',
-        'haarcascade_profileface.xml'
-    ]
-    
     faces = []
-    for cascade_name in cascades:
-        cascade_path = os.path.join(cv2.data.haarcascades, cascade_name)
-        if not os.path.exists(cascade_path):
-            continue
-        face_cascade = cv2.CascadeClassifier(cascade_path)
+    try:
+        # Check if the environment has standard OpenCV attributes
+        if not hasattr(cv2, 'CascadeClassifier'):
+            raise AttributeError("module 'cv2' has no attribute 'CascadeClassifier'")
+            
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         
-        # Try parameter settings from conservative to sensitive
-        for sf in [1.05, 1.1, 1.2]:
-            for mn in [3, 4, 5]:
-                detected = face_cascade.detectMultiScale(
-                    gray, scaleFactor=sf, minNeighbors=mn, minSize=(30, 30)
-                )
-                if len(detected) > 0:
-                    faces = detected
-                    print(f"Face successfully detected using {cascade_name} (scaleFactor={sf}, minNeighbors={mn})")
+        # Try multiple cascades for robustness (alt2 is best for faces with sunglasses/tilts)
+        cascades = [
+            'haarcascade_frontalface_alt2.xml',
+            'haarcascade_frontalface_alt.xml',
+            'haarcascade_frontalface_default.xml',
+            'haarcascade_profileface.xml'
+        ]
+        
+        for cascade_name in cascades:
+            if not hasattr(cv2, 'data') or not hasattr(cv2.data, 'haarcascades'):
+                raise AttributeError("cv2 has no 'data.haarcascades' attribute")
+            cascade_path = os.path.join(cv2.data.haarcascades, cascade_name)
+            if not os.path.exists(cascade_path):
+                continue
+            face_cascade = cv2.CascadeClassifier(cascade_path)
+            
+            # Try parameter settings from conservative to sensitive
+            for sf in [1.05, 1.1, 1.2]:
+                for mn in [3, 4, 5]:
+                    detected = face_cascade.detectMultiScale(
+                        gray, scaleFactor=sf, minNeighbors=mn, minSize=(30, 30)
+                    )
+                    if len(detected) > 0:
+                        faces = detected
+                        print(f"Face successfully detected using {cascade_name} (scaleFactor={sf}, minNeighbors={mn})")
+                        break
+                if len(faces) > 0:
                     break
             if len(faces) > 0:
                 break
-        if len(faces) > 0:
-            break
+    except Exception as e:
+        print(f"\n[Warning] Face detection failed with error: {str(e)}")
+        print("This usually happens on Google Colab if a dummy 'cv2' package shadows the official 'opencv-python' package.")
+        print("To fix this in your Colab notebook, please run:")
+        print("    !pip uninstall -y cv2 && pip install opencv-python")
+        print("Falling back to default center crop...\n")
+        faces = []
             
     if len(faces) == 0:
         print("No faces detected in the image. Defaulting to center crop...")
