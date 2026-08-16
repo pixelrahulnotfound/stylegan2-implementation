@@ -285,12 +285,16 @@ class Generator(nn.Module):
         self.to_rgb_128 = EqualLRConv2d(in_c//4, 3, 1)
         self.to_rgb_256 = EqualLRConv2d(in_c//4, 3, 1)
 
-    def forward(self, z, return_latents=False):
+    def forward(self, z, return_latents=False, truncation=1.0, w_avg=None):
         w = self.g_mapping(z)
+        
+        if w_avg is not None and truncation < 1.0:
+            w = w_avg + truncation * (w - w_avg)
+            
         batch_size = z.size(0)
         
         # Style mixing regularization during training
-        mixing = (torch.rand(batch_size, device=z.device) < 0.9) if self.training else False
+        mixing = (torch.rand(batch_size, device=z.device) < 0.9) if (self.training and w_avg is None) else False
         
         if mixing:
             z2 = torch.randn_like(z)
