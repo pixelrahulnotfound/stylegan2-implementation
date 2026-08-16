@@ -62,7 +62,7 @@ def main():
     if not os.path.exists(args.weights):
         if args.weights == "weights/best_checkpoint_1010k.pth":
             os.makedirs(os.path.dirname(args.weights), exist_ok=True)
-            url = "https://huggingface.co/YM2132/StyleGAN2/resolve/main/best_checkpoint_1010k.pth"
+            url = "https://huggingface.co/pixelnotfound/stylegan2/resolve/main/best_checkpoint_1010k.pth"
             print(f"Weights file not found at '{args.weights}'. Downloading pre-trained weights from Hugging Face...")
             import urllib.request
             
