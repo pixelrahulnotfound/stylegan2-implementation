@@ -111,6 +111,26 @@ def main():
 
     # 2. Initialize generator
     generator = Generator().to(device)
+    if not os.path.exists(args.weights):
+        if args.weights == "weights/best_checkpoint_1010k.pth":
+            os.makedirs(os.path.dirname(args.weights), exist_ok=True)
+            url = "https://huggingface.co/YM2132/StyleGAN2/resolve/main/best_checkpoint_1010k.pth"
+            print(f"Weights file not found at '{args.weights}'. Downloading pre-trained weights from Hugging Face...")
+            import urllib.request
+            
+            def progress_bar(block_num, block_size, total_size):
+                read_so_far = block_num * block_size
+                if total_size > 0:
+                    percent = min(100, read_so_far * 100 // total_size)
+                    import sys
+                    sys.stdout.write(f"\rDownloading: {percent}% ({read_so_far // (1024*1024)}MB / {total_size // (1024*1024)}MB)")
+                    sys.stdout.flush()
+            
+            urllib.request.urlretrieve(url, args.weights, reporthook=progress_bar)
+            print("\nDownload complete!")
+        else:
+            raise FileNotFoundError(f"Weights file not found at: {args.weights}")
+            
     checkpoint = torch.load(args.weights, map_location=device)
     if 'g_running_state_dict' in checkpoint:
         generator.load_state_dict(checkpoint['g_running_state_dict'])
