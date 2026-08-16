@@ -237,5 +237,52 @@ def main():
     print(f"Saved reconstructed image to: {os.path.join(args.output_dir, 'inversion_output.png')}")
     print(f"Saved optimized latent code to: {latent_save_path}")
 
+    # 6. Generate face variations based on the inverted face
+    print("\nGenerating variations based on your inverted face...")
+    with torch.no_grad():
+        z_random = torch.randn(1, 512, device=device)
+        w_random = generator.g_mapping(z_random).unsqueeze(1).repeat(1, 7, 1)
+        
+        for alpha in [0.1, 0.3, 0.5, 0.7]:
+            w_mixed = w_opt + alpha * (w_random - w_opt)
+            
+            # Manual forward pass to accept custom w_mixed styles
+            out = generator.block_4x4(w_mixed[:, 0])
+            out_4 = generator.to_rgb_4(out)
+            out_4 = generator.upsample(out_4)
+            
+            out = generator.block_8x8(w_mixed[:, 1], out)
+            out_8 = generator.to_rgb_8(out)
+            out_8 += out_4 * (1 / math.sqrt(2))
+            out_8 = generator.upsample(out_8)
+            
+            out = generator.block_16x16(w_mixed[:, 2], out)
+            out_16 = generator.to_rgb_16(out)
+            out_16 += out_8 * (1 / math.sqrt(2))
+            out_16 = generator.upsample(out_16)
+            
+            out = generator.block_32x32(w_mixed[:, 3], out)
+            out_32 = generator.to_rgb_32(out)
+            out_32 += out_16 * (1 / math.sqrt(2))
+            out_32 = generator.upsample(out_32)
+            
+            out = generator.block_64x64(w_mixed[:, 4], out)
+            out_64 = generator.to_rgb_64(out)
+            out_64 += out_32 * (1 / math.sqrt(2))
+            out_64 = generator.upsample(out_64)
+
+            out = generator.block_128x128(w_mixed[:, 5], out)            
+            out_128 = generator.to_rgb_128(out)
+            out_128 += out_64 * (1 / math.sqrt(2))
+            out_128 = generator.upsample(out_128)
+
+            out = generator.block_256x256(w_mixed[:, 6], out)
+            out_256 = generator.to_rgb_128(out)
+            out_256 += out_128 * (1 / math.sqrt(2))
+            
+            blend_path = os.path.join(args.output_dir, f"inversion_blend_{alpha:.1f}.png")
+            save_reconstruction(out_256, blend_path)
+            print(f"Saved blend variation ({alpha*100:.0f}% random features) to: {blend_path}")
+
 if __name__ == "__main__":
     main()
