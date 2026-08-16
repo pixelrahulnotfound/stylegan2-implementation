@@ -16,6 +16,7 @@ This implementation successfully addresses key limitations of the original Style
 ├── losses.py      # GAN loss functions, R1 regularization, and PPL regularization
 ├── train.py       # Full training pipeline with CLI options and FID logging
 ├── generate.py    # Image generation inference script with the truncation trick
+├── invert.py      # GAN Inversion tool (project custom images into latent space)
 ├── weights/       # Directory containing pre-trained weights
 │   └── best_checkpoint_1010k.pth
 └── output/        # Default directory for generated images
@@ -100,6 +101,24 @@ To train the model on your own dataset (e.g., FFHQ or custom faces):
 * `--total_iters`: Total training iterations.
 * `--eval_freq`: Iteration interval for calculating FID and saving checkpoints.
 * `--resume`: Path to a checkpoint `.pth` file to resume training.
+
+---
+
+## GAN Inversion (Image Projection)
+
+To find the latent code $w$ that reconstructs a specific target face photo, you can run the GAN Inversion script. This optimizes the latent vector in the $W^+$ space to minimize both pixel-wise MSE loss and VGG perceptual similarity loss:
+
+```bash
+python3 invert.py --target /path/to/target_face.png --steps 1000 --lr 0.01
+```
+
+### Inversion Argument Reference:
+* `--target`: Path to the target image you want to project into the latent space (required).
+* `--weights`: Path to pre-trained weights (default: `weights/best_checkpoint_1010k.pth`).
+* `--output_dir`: Directory to save the output files (default: `output`).
+* `--steps`: Number of optimization steps (default: 1000).
+* `--lr`: Optimizer learning rate (default: 0.01).
+* `--device`: Force device selection (`cuda`, `mps`, `cpu`).
 
 ---
 
