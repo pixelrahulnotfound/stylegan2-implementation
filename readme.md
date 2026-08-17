@@ -34,7 +34,7 @@ This implementation successfully addresses key limitations of the original Style
 1. **Clone the repository:**
    ```bash
    git clone https://github.com/pixelrahulnotfound/stylegan2-implementation/
-   cd gans
+   cd stylegan2-implementation
    ```
 
 2. **Install dependencies:**
